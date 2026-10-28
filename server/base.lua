@@ -103,16 +103,40 @@ end
 
 -- Cars are created HERE: spz-core buckets run strict entity lockdown and delete
 -- networked entities a client creates.
-local function spawnCarFor(bucketId, x, y, z, heading)
-    local pool = Config.Cars or { "blista" }
-    local model = pool[math.random(#pool)]
-    local veh = CreateVehicleServerSetter(joaat(model), "automobile", x, y, z, heading or 0.0)
-    local dl = GetGameTimer() + 3000
-    while veh ~= 0 and not DoesEntityExist(veh) and GetGameTimer() < dl do Wait(0) end
-    if not veh or veh == 0 or not DoesEntityExist(veh) then return nil end
+-- One random category per round (Config.CarClasses), a random car from it per
+-- player. r.carClass is cleared when a new round respawns everyone.
+local function roundClass(r)
+    if not r.carClass then
+        local list = Config.CarClasses or {}
+        r.carClass = list[math.random(math.max(1, #list))] or { name = "Sports", cars = Config.Cars or { "sultan" } }
+    end
+    return r.carClass
+end
+
+local function tellClass(src, cls, model)
+    TriggerClientEvent("ox_lib:notify", src, {
+        title = cls.name:upper() .. " ROUND",
+        description = ("Your car: %s"):format(model),
+        type = "inform", duration = 4000,
+    })
+end
+
+local function spawnCarFor(bucketId, x, y, z, heading, pool)
+    -- A bad model name in the config fails to create; try a few others.
+    local veh, model = 0, nil
+    for _ = 1, 4 do
+        model = pool[math.random(#pool)]
+        veh = CreateVehicleServerSetter(joaat(model), "automobile", x, y, z, heading or 0.0)
+        local dl = GetGameTimer() + 3000
+        while veh ~= 0 and not DoesEntityExist(veh) and GetGameTimer() < dl do Wait(0) end
+        if veh ~= 0 and DoesEntityExist(veh) then break end
+        print(("^3[cars] could not create '%s', retrying^7"):format(tostring(model)))
+        veh = 0
+    end
+    if veh == 0 then return nil end
     if bucketId ~= 0 then SetEntityRoutingBucket(veh, bucketId) end
     SetEntityOrphanMode(veh, 2)
-    return veh
+    return veh, model
 end
 
 local function deleteCar(p)
@@ -187,6 +211,7 @@ end
 -- Everyone still in the match back onto the start ring in a fresh car, then
 -- 3-2-1-GO. For games played over several rounds (Game.run calls it).
 function Base.respawnAll(r)
+    r.carClass = nil   -- new round: draw a new car category
     r.live = false
     local present = {}
     for src, p in pairs(r.players) do
@@ -652,7 +677,9 @@ RegisterNetEvent(E("ready"), function(groundZ)
     local p = r and r.players[src]
     if not p or p.veh or not p.spawn then return end
     local z = (type(groundZ) == "number" and math.abs(groundZ - Config.Center.z) < 30.0) and groundZ or p.spawn.z
-    local veh = spawnCarFor(r.bucketId or 0, p.spawn.x, p.spawn.y, z + 0.6, p.heading)
+    local cls = roundClass(r)
+    local veh, model = spawnCarFor(r.bucketId or 0, p.spawn.x, p.spawn.y, z + 0.6, p.heading, cls.cars)
+    if veh then tellClass(src, cls, model) end
     if not r.active then if veh then DeleteEntity(veh) end return end
     p.veh = veh
     TriggerClientEvent(E("car"), src, { netId = veh and NetworkGetNetworkIdFromEntity(veh) or nil })

@@ -180,6 +180,69 @@ CreateThread(function()
     end
 end)
 
+-- ── Per-wave jump + boost ───────────────────────────────────────────────────
+-- One of each per wave, keyed "round:wave" so a wave-1 jump spent in round 1
+-- doesn't read as used in round 2 wave 1 (same as Color Rush).
+local jumpUsed, boostUsed = nil, nil
+local boostUntil = 0
+
+local function waveKey()
+    local s = Base.state or {}
+    return (s.round or 1) .. ":" .. (s.wave or 0)
+end
+
+local function canUse()
+    local s = Base.state or {}
+    local v = Base.veh
+    return Base.active and Base.alive and (s.wave or 0) > 0 and s.phase == "fuse"
+        and v ~= 0 and DoesEntityExist(v) and GetPedInVehicleSeat(v, -1) == PlayerPedId()
+end
+
+RegisterCommand("+bomb_jump", function()
+    if not canUse() or jumpUsed == waveKey() then return end
+    local v = Base.veh
+    jumpUsed = waveKey()
+    local vel, f = GetEntityVelocity(v), GetEntityForwardVector(v)
+    local fwd = Config.JumpForward or 0.0
+    SetEntityVelocity(v, vel.x + f.x * fwd, vel.y + f.y * fwd, vel.z + (Config.JumpVelocity or 9.0))
+    PlaySoundFrontend(-1, "Jump", "DLC_Stunt_Race_Sounds", true)
+end, false)
+RegisterCommand("-bomb_jump", function() end, false)
+RegisterKeyMapping("+bomb_jump", "Bomb Tag: car jump (once per wave)", "keyboard", Config.JumpKey or "E")
+RegisterKeyMapping("+bomb_jump", "Bomb Tag: car jump (controller)", "PAD_DIGITALBUTTON", "RLEFT_INDEX")
+
+RegisterCommand("+bomb_boost", function()
+    if not canUse() or boostUsed == waveKey() then return end
+    boostUsed = waveKey()
+    boostUntil = GetGameTimer() + math.floor((Config.BoostSec or 2.0) * 1000)
+    SetVehicleBoostActive(Base.veh, true)
+    AnimpostfxPlay("RaceTurbo", 0, false)
+end, false)
+RegisterCommand("-bomb_boost", function() end, false)
+RegisterKeyMapping("+bomb_boost", "Bomb Tag: boost (once per wave)", "keyboard", Config.BoostKey or "LSHIFT")
+RegisterKeyMapping("+bomb_boost", "Bomb Tag: boost (controller)", "PAD_DIGITALBUTTON", "LUP_INDEX")
+
+-- While boosting: push the car forward every frame, capped.
+CreateThread(function()
+    while true do
+        if boostUntil > 0 then
+            local v = Base.veh
+            if GetGameTimer() >= boostUntil or not Base.active or v == 0 or not DoesEntityExist(v) then
+                if v ~= 0 and DoesEntityExist(v) then SetVehicleBoostActive(v, false) end
+                boostUntil = 0
+            else
+                local speed = GetEntitySpeed(v)
+                if speed < (Config.BoostMaxMs or 55.0) then
+                    SetVehicleForwardSpeed(v, speed + (Config.BoostAccel or 18.0) * GetFrameTime())
+                end
+            end
+            Wait(0)
+        else
+            Wait(100)
+        end
+    end
+end)
+
 RegisterNetEvent(Base.E("roundOver"), function(d)
     if not Base.active then return end
     holders = {}; setHolding(false)
@@ -193,6 +256,13 @@ RegisterNetEvent(Base.E("roundOver"), function(d)
 end)
 
 function Game.hud(s, hud)
+    if Base.alive and (s.wave or 0) > 0 then
+        local k = waveKey()
+        local jr, br = jumpUsed ~= k, boostUsed ~= k
+        hud.keys = hud.keys or {}
+        hud.keys[#hud.keys + 1] = { cmd = "+bomb_jump", default = Config.JumpKey or "E", pad = "RLEFT_INDEX", label = "Jump", hot = jr, dim = not jr }
+        hud.keys[#hud.keys + 1] = { cmd = "+bomb_boost", default = Config.BoostKey or "LSHIFT", pad = "LUP_INDEX", label = "Boost", hot = br, dim = not br }
+    end
     if s.round then
         table.insert(hud.chips, 1, ("Round %d / %d"):format(s.round, s.rounds or 0))
         hud.chips[#hud.chips + 1] = { text = ("Your wins %d"):format(s.wins or 0), hot = (s.wins or 0) > 0 }
