@@ -3,7 +3,7 @@ game 'gta5'
 
 name 'spz-bomb'
 description 'SPiceZ Minigame — Bomb Tag. Pass the bomb by ramming another car; whoever holds it when the fuse runs out is out. Waves until one is left.'
-version '1.1.0'
+version '1.1.1'
 author 'SPiceZ-Core'
 lua54 'yes'
 
